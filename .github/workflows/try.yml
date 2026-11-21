@@ -1,0 +1,67 @@
+# Oracle's free ARM server: GitHub tries to make it every 15 minutes, until there is room.
+# Once the server exists, this switches itself off. Needs the six secrets listed in README.md.
+name: Oracle server try
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: oracle-try
+  cancel-in-progress: false
+
+jobs:
+  try:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
+      SUPPRESS_LABEL_WARNING: 'True'
+      C: ${{ secrets.OCI_TENANCY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Oracle settings
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_KEY: ${{ secrets.OCI_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_KEY" > ~/.oci/key.pem
+          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=%s\n' \
+            "$OCI_USER" "$OCI_FINGERPRINT" "$C" "$OCI_REGION" "$HOME/.oci/key.pem" > ~/.oci/config
+          chmod 600 ~/.oci/key.pem ~/.oci/config
+          printf '%s\n' "$SSH_PUBLIC_KEY" > ~/ssh.pub
+
+      - name: Try to make the server
+        run: |
+          stop() { gh workflow disable try.yml -R "$GITHUB_REPOSITORY" || true; }
+          made=$(oci compute instance list -c "$C" --display-name madarsahub-server \
+            --query "length(data[?\"lifecycle-state\"!='TERMINATED' && \"lifecycle-state\"!='TERMINATING'])" --raw-output)
+          if [ "$made" != "0" ]; then echo "Server pehle se bana hua hai. Ye kaam band."; stop; exit 0; fi
+          AD=$(oci iam availability-domain list -c "$C" --query 'data[0].name' --raw-output)
+          SUBNET=$(oci network subnet list -c "$C" --query 'data[0].id' --raw-output)
+          IMG=$(oci compute image list -c "$C" --operating-system "Canonical Ubuntu" --operating-system-version "24.04" \
+            --shape VM.Standard.A1.Flex --sort-by TIMECREATED --sort-order DESC --query 'data[0].id' --raw-output)
+          for size in "2 12" "1 6"; do
+            set -- $size
+            OUT=$(oci compute instance launch --availability-domain "$AD" -c "$C" \
+              --shape VM.Standard.A1.Flex --shape-config "{\"ocpus\":$1,\"memoryInGBs\":$2}" \
+              --image-id "$IMG" --subnet-id "$SUBNET" --assign-public-ip true \
+              --boot-volume-size-in-gbs 100 --display-name madarsahub-server \
+              --ssh-authorized-keys-file ~/ssh.pub 2>&1) || true
+            if echo "$OUT" | grep -q '"lifecycle-state"'; then echo "SERVER BAN GAYA! ($1 CPU / $2 GB)"; stop; exit 0; fi
+            if echo "$OUT" | grep -qi 'out of host capacity\|out of capacity'; then echo "$1 CPU / $2 GB: abhi jagah nahi"; continue; fi
+            if echo "$OUT" | grep -qi 'toomanyrequests\|too many requests'; then echo "Oracle ne roka, agli dafa"; exit 0; fi
+            echo "Koi aur masla:"; echo "$OUT" | grep -iE '"message"|"code"|error' | head -10; exit 1
+          done
