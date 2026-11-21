@@ -48,7 +48,8 @@ jobs:
           stop() { gh workflow disable try.yml -R "$GITHUB_REPOSITORY" || true; }
           made=$(oci compute instance list -c "$C" --display-name madarsahub-server \
             --query "length(data[?\"lifecycle-state\"!='TERMINATED' && \"lifecycle-state\"!='TERMINATING'])" --raw-output)
-          if [ "$made" != "0" ]; then echo "Server pehle se bana hua hai. Ye kaam band."; stop; exit 0; fi
+          # No servers at all prints nothing (not "0").
+          if [ "${made:-0}" -gt 0 ] 2>/dev/null; then echo "Server pehle se bana hua hai. Ye kaam band."; stop; exit 0; fi
           AD=$(oci iam availability-domain list -c "$C" --query 'data[0].name' --raw-output)
           SUBNET=$(oci network subnet list -c "$C" --query 'data[0].id' --raw-output)
           IMG=$(oci compute image list -c "$C" --operating-system "Canonical Ubuntu" --operating-system-version "24.04" \
