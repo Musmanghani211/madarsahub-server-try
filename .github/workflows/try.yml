@@ -1,10 +1,11 @@
-# Oracle's free ARM server: GitHub tries to make it every 10 minutes, until there is room.
-# Once the server exists, this switches itself off. Needs the six secrets listed in README.md.
+# Oracle's free ARM server: one run keeps trying every 10 minutes for about 5.5 hours, then starts the next run itself
+# (a public repo has no limit on minutes). Once the server exists, everything switches itself off.
+# The schedule is only a backup in case the chain ever breaks. Needs the six secrets listed in README.md.
 name: Oracle server try
 
 on:
   schedule:
-    - cron: '3,13,23,33,43,53 * * * *'
+    - cron: '17 */3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +19,7 @@ concurrency:
 jobs:
   try:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 350
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
       SUPPRESS_LABEL_WARNING: 'True'
@@ -43,26 +44,34 @@ jobs:
           chmod 600 ~/.oci/key.pem ~/.oci/config
           printf '%s\n' "$SSH_PUBLIC_KEY" > ~/ssh.pub
 
-      - name: Try to make the server
+      - name: Keep trying (every 10 minutes)
         run: |
           stop() { gh workflow disable try.yml -R "$GITHUB_REPOSITORY" || true; }
-          made=$(oci compute instance list -c "$C" --display-name madarsahub-server \
-            --query "length(data[?\"lifecycle-state\"!='TERMINATED' && \"lifecycle-state\"!='TERMINATING'])" --raw-output)
-          # No servers at all prints nothing (not "0").
-          if [ "${made:-0}" -gt 0 ] 2>/dev/null; then echo "Server pehle se bana hua hai. Ye kaam band."; stop; exit 0; fi
           AD=$(oci iam availability-domain list -c "$C" --query 'data[0].name' --raw-output)
           SUBNET=$(oci network subnet list -c "$C" --query 'data[0].id' --raw-output)
           IMG=$(oci compute image list -c "$C" --operating-system "Canonical Ubuntu" --operating-system-version "24.04" \
             --shape VM.Standard.A1.Flex --sort-by TIMECREATED --sort-order DESC --query 'data[0].id' --raw-output)
-          for size in "2 12" "1 6"; do
-            set -- $size
-            OUT=$(oci compute instance launch --availability-domain "$AD" -c "$C" \
-              --shape VM.Standard.A1.Flex --shape-config "{\"ocpus\":$1,\"memoryInGBs\":$2}" \
-              --image-id "$IMG" --subnet-id "$SUBNET" --assign-public-ip true \
-              --boot-volume-size-in-gbs 100 --display-name madarsahub-server \
-              --ssh-authorized-keys-file ~/ssh.pub 2>&1) || true
-            if echo "$OUT" | grep -q '"lifecycle-state"'; then echo "SERVER BAN GAYA! ($1 CPU / $2 GB)"; stop; exit 0; fi
-            if echo "$OUT" | grep -qi 'out of host capacity\|out of capacity'; then echo "$1 CPU / $2 GB: abhi jagah nahi"; sleep 45; continue; fi
-            if echo "$OUT" | grep -qi 'toomanyrequests\|too many requests'; then echo "Oracle ne roka, agli dafa"; exit 0; fi
-            echo "Koi aur masla:"; echo "$OUT" | grep -iE '"message"|"code"|error' | head -10; exit 1
+          end=$(( $(date +%s) + 330*60 ))
+          n=0
+          while [ "$(date +%s)" -lt "$end" ]; do
+            n=$((n+1))
+            # Made already (by this run, an earlier one, or by hand)? Nothing printed means none at all.
+            made=$(oci compute instance list -c "$C" --display-name madarsahub-server \
+              --query "length(data[?\"lifecycle-state\"!='TERMINATED' && \"lifecycle-state\"!='TERMINATING'])" --raw-output 2>/dev/null || true)
+            if [ "${made:-0}" -gt 0 ] 2>/dev/null; then echo "$(date -u +%H:%M) Server bana hua hai. Ye kaam band."; stop; exit 0; fi
+            for size in "2 12" "1 6"; do
+              set -- $size
+              OUT=$(oci compute instance launch --availability-domain "$AD" -c "$C" \
+                --shape VM.Standard.A1.Flex --shape-config "{\"ocpus\":$1,\"memoryInGBs\":$2}" \
+                --image-id "$IMG" --subnet-id "$SUBNET" --assign-public-ip true \
+                --boot-volume-size-in-gbs 100 --display-name madarsahub-server \
+                --ssh-authorized-keys-file ~/ssh.pub 2>&1) || true
+              if echo "$OUT" | grep -q '"lifecycle-state"'; then echo "$(date -u +%H:%M) SERVER BAN GAYA! ($1 CPU / $2 GB)"; stop; exit 0; fi
+              if echo "$OUT" | grep -qi 'out of host capacity\|out of capacity'; then echo "$(date -u +%H:%M) koshish $n, $1 CPU / $2 GB: abhi jagah nahi"; sleep 45; continue; fi
+              if echo "$OUT" | grep -qi 'toomanyrequests\|too many requests'; then echo "$(date -u +%H:%M) koshish $n: Oracle ne roka"; sleep 300; break; fi
+              echo "$(date -u +%H:%M) Koi aur masla:"; echo "$OUT" | grep -iE '"code"|"message"' | head -6; exit 1
+            done
+            sleep 510
           done
+          echo "Ye daur khatam, agla khud shuru."
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/try.yml/dispatches" -f ref=main
