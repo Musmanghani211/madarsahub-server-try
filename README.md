@@ -1,6 +1,6 @@
 # MadarsaHub: Oracle server try
 
-GitHub tries every 15 minutes to make the free Oracle ARM server (`madarsahub-server`: Ubuntu 24.04, 2 CPU / 12 GB,
+GitHub tries every 10 minutes to make the free Oracle ARM server (`madarsahub-server`: Ubuntu 24.04, 2 CPU / 12 GB,
 or 1 CPU / 6 GB if the bigger one has no room). When the server exists, the workflow switches itself off.
 
 Secrets (Settings -> Secrets and variables -> Actions):

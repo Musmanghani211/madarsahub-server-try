@@ -1,10 +1,10 @@
-# Oracle's free ARM server: GitHub tries to make it every 15 minutes, until there is room.
+# Oracle's free ARM server: GitHub tries to make it every 10 minutes, until there is room.
 # Once the server exists, this switches itself off. Needs the six secrets listed in README.md.
 name: Oracle server try
 
 on:
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
 
 permissions:
