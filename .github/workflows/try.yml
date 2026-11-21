@@ -62,7 +62,7 @@ jobs:
               --boot-volume-size-in-gbs 100 --display-name madarsahub-server \
               --ssh-authorized-keys-file ~/ssh.pub 2>&1) || true
             if echo "$OUT" | grep -q '"lifecycle-state"'; then echo "SERVER BAN GAYA! ($1 CPU / $2 GB)"; stop; exit 0; fi
-            if echo "$OUT" | grep -qi 'out of host capacity\|out of capacity'; then echo "$1 CPU / $2 GB: abhi jagah nahi"; continue; fi
+            if echo "$OUT" | grep -qi 'out of host capacity\|out of capacity'; then echo "$1 CPU / $2 GB: abhi jagah nahi"; sleep 45; continue; fi
             if echo "$OUT" | grep -qi 'toomanyrequests\|too many requests'; then echo "Oracle ne roka, agli dafa"; exit 0; fi
             echo "Koi aur masla:"; echo "$OUT" | grep -iE '"message"|"code"|error' | head -10; exit 1
           done
